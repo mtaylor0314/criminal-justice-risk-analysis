@@ -1,0 +1,435 @@
+---
+title: "Practice Cleaning Data"
+output: html_document
+date: "2025-06-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(readr)
+library (data.table)
+install.packages("pROC")  # Only run this once
+library(pROC)
+install.packages("arrow")
+library(arrow)
+library(ggplot2)
+```
+
+# Here I am going to import my data, set my working directory, start subsetting the data
+
+```{r}
+# a good first step is to create a folder for your dataset and to store this markdown file in
+
+setwd() # set working directory 
+
+dataframe <- load.csv ("name of dataset.csv") # I would adapt this to the name of your crime dataset
+
+compas_scores <- read.csv("compas-scores.csv")
+
+View(dataframe) # check what your data looks like, what the names of the variables are
+
+View(compas_scores)
+
+#variables id dataset
+
+str(compas_scores)
+
+# transform the data to make race a dummy variable where Black == 1, white == 0
+
+compas_scores$race_dummy <- ifelse(compas_scores$race == "African-American", 1,
+                            ifelse(compas_scores$race == "Caucasian", 0, NA))
+
+# this is the example code from lab 5, can you adjust it for the values you need?
+
+
+# Create the new variable educated hispanics educated means educ_attain=>4
+# sub_anes <- sub_anes %>% mutate(edu_hisp = ifelse(hisp == 1 & educ_attain >= 4,1,0))
+
+
+
+# make my first subset data
+
+subset1 <- dataframe[,c("variable 1", "variable 2", "variable 3")]
+
+subset1 <- compas_scores[,c("v_decile_score","sex", "age", "race")]
+
+# let's say you want to subset your data where a specific variable is equal to a specific outcome, like crime
+
+subset2 <- dataframe[,c("variable 1", "variable 2", "variable 3", "c_charge_desc == battery")]
+
+subset2 <- compas_scores[compas_scores$c_charge_desc == "Felony Petit Theft",
+                         c("v_decile_score", "sex", "age", "race"),]
+
+
+  
+# now what if you want to subset your data to where a specific variable is equal to a few possible outcomes, use the & and function or the | or function to grab variables where the observation assumes one of a few particular values
+
+subset3 <- dataframe[,c("variable 1", "variable 2", "variable 3", "c_charge_desc == battery" | "c_charge_desc == homocide"| "c_charge_desc == grand theft")]
+
+subset3 <- compas_scores[,c("sex" + "race" + "age" + "priors_count" + "juv_fel_count", "c_charge_desc == Petit Theft" | "c_charge_desc == Possess Cannabis/20 Grams Or Less")]
+
+# check how many obs for your subset data
+nrow(subset1)
+nrow (subset2)
+summary (subset2$sex)
+
+```
+
+Once you have the subsets of the data you want, it's a good idea to note how
+many observations you have overall, how many obs for the types of crimes you want, etc.
+
+# Start Exploring the Data
+
+```{r}
+# check for incomplete observations, esp. for outcome
+
+is.na(subset1$"outcome") # check your incomplete obs
+
+
+#subset 2
+subset2 <- subset2 [!is.na(subset2$"race"),]
+
+#subset 3
+subset3 <- subset3 [!is.na(subset3$race),]
+
+## use = complete.obs argument, or similar na.rm = TRUE
+subset1 <- subset1
+
+summary(subset1, na.rm = TRUE) # gives summary w/o missing 
+
+summary(subset1$race)
+
+summary(subset2, na.rm = TRUE)
+
+subset2$race <- as.factor(subset2$race)
+
+summary(subset2$race)
+
+```
+
+I would also write down how many observations you have *after* you remove
+the incomplete observations. This is the final amount of observations you will
+be analyzing, which will be used for calculating your degrees of freedom (n-1).
+```{r}
+# Make race a categorical variable
+compas_scores$race <- as.factor(compas_scores$race)
+summary(compas_scores$race)
+
+#Change reference level to Caucasian
+compas_scores$race <- relevel(compas_scores$race, ref = "Caucasian")
+```
+
+
+```{r}
+
+subset3 <- compas_scores %>%
+  filter(race %in% c("African-American", "Caucasian"))
+
+# 2. Create race dummy: 1 = Black, 0 = White
+subset3$race_dummy <- ifelse(
+  subset3$race == "African-American", 1,
+  ifelse(subset3$race == "Caucasian", 0, NA)
+)
+
+# 3. Correlation between race (Black=1, White=0) and COMPAS violent decile score
+cor(subset3$race_dummy, subset3$v_decile_score, use = "complete.obs")
+```
+```{r}
+#Demographic Breakdowns of each Race
+library(knitr)
+
+# Create the frequency table and convert to data frame
+race_table <- as.data.frame(table(compas_scores$race))
+
+# Rename the columns
+colnames(race_table) <- c("Race", "Count")
+
+# Output table with new column names
+kable(race_table, caption = "Race Distribution in COMPAS Dataset")
+
+#Table Output
+install.packages("kableExtra")
+library(kableExtra)
+
+#Save Table
+kbl(race_table)
+
+#Prop Table
+race_prop <- as.data.frame(prop.table(compas_scores$race_dummy))
+
+colnames(race_prop) <- c("Race", "Count")
+
+kable(race_prop, caption = "Racial Breakdown in COMPAS")
+```
+```{r}
+
+```
+
+
+```{r}
+#Gabby Examples
+model_1 <- lm(raw score ~ sex + race + age, data = subset1 ) # for all crimes
+summary(model_1) # this will give you summary statistics for your first model
+
+ 
+model_2 <- lm(raw score ~ sex + race + age, data = subset1[,c_charg_desc == battery]) # this will give you a model where crimes are all battery
+summary(model_2) # this will give you summary statistics for your second model
+
+```
+
+
+```{r}
+#Base Model for all scores
+
+model <- lm(v_decile_score ~ race + age + sex + priors_count + juv_fel_count, data = compas_scores)
+summary(model)
+```
+
+
+```{r}
+#Visuals for Base Model
+library(ggplot2)
+library(arm)
+library(dotwhisker)
+
+
+library(broom)
+library(ggplot2)
+
+#Coefficient Plot
+model <- lm(v_decile_score ~ race + age + sex, data = compas_scores)
+tidy_model <- tidy(model, conf.int = TRUE)
+
+ggplot(tidy_model, aes(x = term, y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  labs(title = "Model Coefficients", x = "Identity", y = "Estimate") +
+  theme_classic() +
+  coord_flip()
+ggplot(tidy_model, aes(x = term, y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Significance line
+  labs(title = "Model Coefficients", x = "Identity", y = "Estimate") +
+  theme_classic() +
+  coord_flip()
+
+```
+
+
+```{r} 
+#Base model (Grand Theft 3rd Degree)
+model1 <- lm(v_decile_score ~ sex + race + age, data = subset1) 
+summary(model1)
+
+model2 <- lm(v_decile_score ~ sex + race + age + priors_count + juv_fel_count, 
+             data = compas_scores[
+               compas_scores$c_charge_desc == "Grand Theft in the 3rd Degree" &
+               compas_scores$is_recid == 1, ])
+summary(model2)
+
+# Model for Grand Theft 3rd Degree
+library(broom)
+library(ggplot2)
+
+tidy_model1 <- tidy(model1, conf.int = TRUE)
+tidy_model1$model <- "Base Model"
+tidy_model2 <- tidy(model2, conf.int = TRUE)
+tidy_model2$model <- "Control Model"
+
+coeffs <- rbind(tidy_model1, tidy_model2)
+
+ggplot(coeffs[coeffs$term != "(Intercept)", ], aes(x = term, y = estimate, color = model)) +
+  geom_point(position = position_dodge(0.5)) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2, position = position_dodge(0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +  # <-- this line adds the reference for significance
+  coord_flip() +
+  labs(title = "COMPAS Scores (Grand Theft in the Third Degree)",
+       y = "Coefficient Estimate (Risk Score)",
+       x = "Predictor",
+       caption = "Dashed line at zero indicates no statistical effect") +
+  theme_minimal()
+```
+```{r}
+# Base Model for Felony Petit Theft
+model3 <- lm(v_decile_score ~ sex + race + age, data = subset2)
+
+summary (model3)
+
+# Full Model
+model4 <- lm(v_decile_score ~ sex + race + age + priors_count + juv_fel_count, 
+             data = compas_scores[
+               compas_scores$c_charge_desc == "Felony Petit Theft" &
+               compas_scores$is_recid == 1, ])
+summary(model4)
+
+# Visuals
+library(broom)
+library(ggplot2)
+
+tidy_model3 <- tidy(model3, conf.int = TRUE)
+tidy_model3$model <- "Base Model"
+tidy_model4 <- tidy(model4, conf.int = TRUE)
+tidy_model4$model <- "Control Model"
+
+coeffs <- rbind(tidy_model3, tidy_model4)
+
+ggplot(coeffs[coeffs$term != "(Intercept)", ], aes(x = term, y = estimate, color = model)) +
+  geom_point(position = position_dodge(0.5)) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2, position = position_dodge(0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +  # <-- this line adds the reference for significance
+  coord_flip() +
+  labs(title = "COMPAS Scores (Felony Petit Theft)",
+       y = "Coefficient Estimate (Risk Score)",
+       x = "Predictor",
+       caption = "Dashed line at zero indicates no statistical effect") +
+  theme_minimal()
+```
+
+
+```{r}
+# Step 1: Start from your full COMPAS dataset
+# Replace `compas` with the actual name of your dataset if different
+compas_clean <- compas_scores %>%
+  filter(
+    race %in% c("African-American", "Caucasian"),
+    is_recid %in% c(0, 1),
+    !is.na(v_decile_score)
+  )
+
+# Step 2: Create race-specific subsets
+black_clean <- compas_clean %>% filter(race == "African-American")
+white_clean <- compas_clean %>% filter(race == "Caucasian")
+
+# Step 3: Compute ROC objects
+roc_black <- roc(
+  response = black_clean$is_recid,
+  predictor = black_clean$v_decile_score,
+  levels = c(0, 1),
+  direction = "<"
+)
+
+roc_white <- roc(
+  response = white_clean$is_recid,
+  predictor = white_clean$v_decile_score,
+  levels = c(0, 1),
+  direction = "<"
+)
+
+# Step 4: Get AUCs
+auc_black <- auc(roc_black)
+auc_white <- auc(roc_white)
+
+auc_black
+auc_white
+
+# Step 5: Plot ROC curves with correct AUC labels
+plot.roc(
+  roc_black,
+  col = "blue",
+  main = "ROC Curves for COMPAS Violent Recidivism by Race",
+  xlab = "False Positive Rate",
+  ylab = "True Positive Rate"
+)
+
+lines.roc(roc_white, col = "red")
+
+legend(
+  "bottomright",
+  legend = c(
+    paste0("Black (AUC = ", round(auc_black, 2), ")"),
+    paste0("White (AUC = ", round(auc_white, 2), ")")
+  ),
+  col = c("blue", "red"),
+  lwd = 2
+)
+```
+
+```{r}
+#Total number of white and black defendants labeled high risk
+# 1. Filter only Black and White defendants
+high_risk_race_tbl <- compas_scores %>%
+  filter(race %in% c("African-American", "Caucasian"))
+
+# 2. Create a flag for "High Risk" (scores 7–10)
+compas_clean <- high_risk_race_tbl %>%
+  mutate(
+    HighRisk = ifelse(v_decile_score >= 7, 1, 0),
+    Race = ifelse(race == "African-American", "Black", "White")
+  )
+
+# 3. Count how many defendants in each race are labeled High Risk
+highrisk_counts <- high_risk_race_tbl %>%
+  group_by(race, v_score_text) %>%
+  summarise(Total = n(), .groups = "drop") %>%
+  mutate(PercentWithinRace = round(100 * Total / sum(Total), 1))
+
+highrisk_counts
+```
+
+
+```{r}
+# 1. Start from full dataset (replace `compas` with your actual dataset name)
+compas_clean <- compas_scores %>%
+  filter(
+    race %in% c("African-American", "Caucasian"),
+    is_recid %in% c(0, 1),
+    !is.na(v_decile_score)
+  ) %>%
+  mutate(
+    Race = ifelse(race == "African-American", "Black", "White")
+  )
+
+# 2. Focus on high-risk defendants only (8–10)
+fig5_df <- compas_clean %>%
+  mutate(
+    ScoreHigh = v_decile_score >= 8,
+    Recidivated = ifelse(is_recid == 1, "Yes", "No")
+  ) %>%
+  filter(ScoreHigh) %>%
+  group_by(Race, Recidivated) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Race) %>%
+  mutate(Percent = 100 * n / sum(n))
+
+# 3. Filter for those who actually recidivated (Yes)
+fig5_yes <- fig5_df %>%
+  filter(Recidivated == "Yes")
+
+# 4. Plot with colors and percent labels
+ggplot(fig5_yes, aes(x = Race, y = Percent, fill = Race)) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(Percent, 1), "%")),
+            vjust = -0.5, size = 5) +
+  scale_fill_manual(values = c("Black" = "#1f78b4", "White" = "#33a02c")) +
+  labs(
+    title = "Recidivism Among High-Risk COMPAS Defendants by Race",
+    x = "Race (High-Risk Defendants Only)",
+    y = "Percent Who Recidivated"
+  ) +
+  ylim(0, 100) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold")
+  )
+```
+
+
+# let's say you just want the coefficients and standard errors for your variables
+
+sum1 <- summary(model2)
+sum1$coefficients[,c(1,2)] # this will pull up just coeff and standard errors
+```
+
+We will do this more in lab with visualizations, but for your model you want
+to report your coefficients, the significance of them (if any), and standard errors.
+
+Then you want to interpret them narratively in context.
+
+For example "In model 1, which controlled for age and sex, race was a statistically
+significant predictor of risk score for those arrested on battery charges. The effect 
+of being Black made the arrested person more likely to get a "High Risk" score by 
+___ percentage points and more likely to get a "Moderate Risk" score by ___ percentage points."
