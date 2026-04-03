@@ -1,17 +1,15 @@
 ---
 title: "risk-assessment-analysis"
-author: "Max Taylor"
+author: "Maxwell Taylor"
 date: "2026-04-03"
-output: html_document
+output: github_document
 ---
 
 #Install Packages
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
-library(dplyr)
-library(readr)
-library(ggplot2)
+library(tidyverse)
 library(pROC)
 library(broom)
 library(knitr)
@@ -239,7 +237,7 @@ legend(
   ),
   col = c("blue", "red"),
   lwd = 2
-)
+) 
 ```
 
 #Count of High Risk Classification Defendants
