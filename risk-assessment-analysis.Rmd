@@ -1,0 +1,301 @@
+---
+title: "risk-assessment-analysis"
+author: "Max Taylor"
+date: "2026-04-03"
+output: html_document
+---
+
+#Install Packages
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(pROC)
+library(broom)
+library(knitr)
+```
+
+#Load and View Data
+```{r}
+# Update this path as needed
+compas_scores <- read_csv("compas-scores.csv")
+
+glimpse(compas_scores)
+summary(compas_scores)
+```
+
+#Count of White and Black Defendants
+```{r}
+# Keep only Black and White defendants for the main comparison
+compas_clean <- compas_scores %>%
+  filter(race %in% c("African-American", "Caucasian")) %>%
+  mutate(
+    race = factor(race),
+    race = relevel(race, ref = "Caucasian"),
+    sex = factor(sex),
+    race_dummy = ifelse(race == "African-American", 1, 0)
+  )
+
+summary(compas_clean$race)
+table(compas_clean$race_dummy)
+```
+
+#Distribution of Black and White Defendants
+```{r}
+race_table <- compas_clean %>%
+  count(race, name = "Count") %>%
+  mutate(Percent = round(100 * Count / sum(Count), 1))
+
+kable(race_table, caption = "Race Distribution in COMPAS Dataset")
+```
+
+#Correlation Score Between Race and Violent Risk Score
+```{r}
+compas_clean %>%
+summarise(correlation = cor(race_dummy, v_decile_score, use = "complete.obs"))
+```
+
+#Baseline Model for all Races
+```{r}
+model_all <- lm(
+  v_decile_score ~ race + age + sex + priors_count + juv_fel_count,
+  data = compas_clean
+)
+
+summary(model_all)
+```
+
+
+#Coefficient Plot for Baseline Model
+```{r}
+tidy_all <- tidy(model_all, conf.int = TRUE)
+
+ggplot(
+  tidy_all %>% filter(term != "(Intercept)"),
+  aes(x = term, y = estimate)
+) +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  coord_flip() +
+  labs(
+    title = "Model Coefficients",
+    x = "Predictor",
+    y = "Estimate"
+  ) +
+  theme_classic()
+```
+
+#Subset for Grand Theft in the Third Degree
+```{r}
+#Filter for Grand Theft in the Third Degree
+grand_theft <- compas_clean %>%
+  filter(c_charge_desc == "Grand Theft in the 3rd Degree")
+
+nrow(grand_theft)
+summary(grand_theft$race)
+
+#Base Model for Grand Theft in the Third Degree 
+model_gt_base <- grand_theft %>%
+  lm (v_decile_score ~ sex + race + age,
+  data = .)
+  
+#Full Model for Grand Theft in the Third Degree
+model_gt_full <- grand_theft %>%
+  lm(v_decile_score ~ sex + race + age + priors_count + juv_fel_count, data = .)
+
+summary(model_gt_base)
+summary(model_gt_full)
+
+#Coefficient Plot for Grand Theft in the 3rd Degree Model
+tidy_gt_base <- tidy(model_gt_base, conf.int = TRUE) %>%
+  mutate(model = "Base Model")
+
+tidy_gt_full <- tidy(model_gt_full, conf.int = TRUE) %>%
+  mutate(model = "Full Model")
+
+coeffs_gt <- bind_rows(tidy_gt_base, tidy_gt_full)
+
+ggplot(
+  coeffs_gt %>% filter(term != "(Intercept)"),
+  aes(x = term, y = estimate, color = model)
+) +
+  geom_point(position = position_dodge(0.5)) +
+  geom_errorbar(
+    aes(ymin = conf.low, ymax = conf.high),
+    width = 0.2,
+    position = position_dodge(0.5)
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  coord_flip() +
+  labs(
+    title = "COMPAS Scores: Grand Theft in the Third Degree",
+    x = "Predictor",
+    y = "Coefficient Estimate",
+    caption = "Dashed line at zero indicates no statistical effect"
+  ) +
+  theme_minimal()
+```
+
+#Subset for Felony Petit Theft
+```{r}
+#Filter for Felony Petit Theft
+petit_theft <- compas_clean %>%
+  filter(c_charge_desc == "Felony Petit Theft")
+
+nrow(petit_theft)
+summary(petit_theft$sex)
+
+#Model  for Felony Petit Theft
+model_pt_base <- petit_theft %>%
+lm(v_decile_score ~ sex + race + age, data = .)
+
+model_pt_full <- petit_theft %>%
+lm(v_decile_score ~ sex + race + age + priors_count + juv_fel_count, data = .)
+
+summary(model_pt_base)
+summary(model_pt_full)
+
+#Coefficient Plot for Felony Petit Theft Model
+tidy_pt_base <- tidy(model_pt_base, conf.int = TRUE) %>%
+  mutate(model = "Base Model")
+
+tidy_pt_full <- tidy(model_pt_full, conf.int = TRUE) %>%
+  mutate(model = "Full Model")
+
+coeffs_pt <- bind_rows(tidy_pt_base, tidy_pt_full)
+
+ggplot(
+  coeffs_pt %>% filter(term != "(Intercept)"),
+  aes(x = term, y = estimate, color = model)
+) +
+  geom_point(position = position_dodge(0.5)) +
+  geom_errorbar(
+    aes(ymin = conf.low, ymax = conf.high),
+    width = 0.2,
+    position = position_dodge(0.5)
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  coord_flip() +
+  labs(
+    title = "COMPAS Scores: Felony Petit Theft",
+    x = "Predictor",
+    y = "Coefficient Estimate",
+    caption = "Dashed line at zero indicates no statistical effect"
+  ) +
+  theme_minimal()
+```
+
+#ROC Curve by Race
+```{r}
+#Filter and Clean Data for Black and White Defendants
+roc_data <- compas_clean %>%
+  filter(is_recid %in% c(0, 1), !is.na(v_decile_score))
+
+black_clean <- roc_data %>%
+  filter(race == "African-American")
+
+white_clean <- roc_data %>%
+  filter(race == "Caucasian")
+
+roc_black <- roc(
+  response = black_clean$is_recid,
+  predictor = black_clean$v_decile_score,
+  levels = c(0, 1),
+  direction = "<"
+)
+
+roc_white <- roc(
+  response = white_clean$is_recid,
+  predictor = white_clean$v_decile_score,
+  levels = c(0, 1),
+  direction = "<"
+)
+
+auc_black <- auc(roc_black)
+auc_white <- auc(roc_white)
+
+auc_black
+auc_white
+
+#ROC Curve Model
+plot.roc(
+  roc_black,
+  col = "blue",
+  main = "ROC Curve by Race",
+  xlab = "False Positive Rate",
+  ylab = "True Positive Rate"
+)
+
+lines.roc(roc_white, col = "red")
+
+legend(
+  "bottomright",
+  legend = c(
+    paste0("Black (AUC = ", round(auc_black, 2), ")"),
+    paste0("White (AUC = ", round(auc_white, 2), ")")
+  ),
+  col = c("blue", "red"),
+  lwd = 2
+)
+```
+
+#Count of High Risk Classification Defendants
+```{r}
+highrisk_counts <- compas_clean %>%
+  mutate(
+    HighRisk = ifelse(v_decile_score >= 7, 1, 0),
+    Race = ifelse(race == "African-American", "Black", "White")
+  ) %>%
+  group_by(Race, HighRisk) %>%
+  summarise(Total = n(), .groups = "drop") %>%
+  group_by(Race) %>%
+  mutate(PercentWithinRace = round(100 * Total / sum(Total), 1))
+
+kable(highrisk_counts, caption = "High-Risk Classification by Race")
+```
+
+#Recidivism Rates Among High-Risk Black and White Defendants
+```{r}
+#Filtering for Black and White Defendants Classified High Risk
+fig5_df <- compas_clean %>%
+  filter(is_recid %in% c(0, 1), !is.na(v_decile_score)) %>%
+  mutate(
+    Race = ifelse(race == "African-American", "Black", "White"),
+    ScoreHigh = v_decile_score >= 8,
+    Recidivated = ifelse(is_recid == 1, "Yes", "No")
+  ) %>%
+  filter(ScoreHigh) %>%
+  group_by(Race, Recidivated) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Race) %>%
+  mutate(Percent = 100 * n / sum(n))
+
+#Filtering for High Risk Defendants who Recidivated
+fig5_yes <- fig5_df %>%
+  filter(Recidivated == "Yes")
+
+#Bar Graph for Recidivism Rates for Black and White High Risk Defendants
+ggplot(fig5_yes, aes(x = Race, y = Percent, fill = Race)) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_text(
+    aes(label = paste0(round(Percent, 1), "%")),
+    vjust = -0.5,
+    size = 5
+  ) +
+  labs(
+    title = "Recidivism Among High-Risk COMPAS Defendants by Race",
+    x = "Race (High-Risk Defendants Only)",
+    y = "Percent Who Recidivated"
+  ) +
+  ylim(0, 100) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold")
+  )
+
+```
